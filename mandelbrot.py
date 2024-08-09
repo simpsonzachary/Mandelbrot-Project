@@ -1,6 +1,7 @@
 import numpy as np
 from numba import cuda
 from PIL import Image
+import cv2
 import math
 
 class Color:
@@ -125,11 +126,12 @@ max_iter = 50000
 
 center_x = -0.7445398603559061
 center_y = 0.1217237738944253
-zoom_level = 9.375e-16
+zoom_level = 9.375e-13
 
 colors = [
-    (255, 255, 255), #White
-    (0, 0, 0),   #Black
+    (0, 0, 0), #White
+    (255, 0, 0), #Red
+    (255, 215, 0),   #Gold
 ]
 num_steps = 2048
 
@@ -138,5 +140,6 @@ gradient = generate_gradient(colors, num_steps)
 image = generate_mandelbrot(center_x, center_y, zoom_level, width, height, max_iter, gradient)
 
 # Save the image as a PNG file
-im = Image.fromarray(image)
-im.save('mandelbrot_colored.png')
+cv2.imshow('Generated Image', cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
+cv2.waitKey(0)  # Wait for a key press to close the window
+cv2.destroyAllWindows()
