@@ -104,15 +104,12 @@ def generate_gradient(colors, num_steps):
     return gradient
 
 def update_bounds(min_x, max_x, min_y, max_y, center_x, center_y, zoom_level):
-    # Calculate the range of the current view
     range_x = max_x - min_x
     range_y = max_y - min_y
 
-    # Update ranges based on the zoom level
     new_range_x = range_x * zoom_level
     new_range_y = range_y * zoom_level
 
-    # Calculate new bounds centered around (center_x, center_y)
     min_x_new = center_x - new_range_x / 2
     max_x_new = center_x + new_range_x / 2
     min_y_new = center_y - new_range_y / 2

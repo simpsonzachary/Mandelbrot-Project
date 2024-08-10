@@ -4,42 +4,49 @@ from numba import cuda
 import math
 
 @cuda.jit
-def add_chunks_kernel(a_chunks, b_chunks, result_chunks, num_chunks_x, num_chunks_y):
-    idx = cuda.grid(1)
-    if idx < num_chunks_x:
-        result_chunks[idx] = a_chunks[idx] + b_chunks[idx]
-        if(result_chunks[idx] >= 10.0):
-            result_chunks[idx - 1] = result_chunks[idx - 1] + 0.0000001
-            result_chunks[idx] = result_chunks[idx] - 10.0
-
-@cuda.jit
-def multiply_chunks_kernel(a_chunks, b_chunks, result_chunks, num_chunks_x, num_chunks_y):
-    idx = cuda.grid(1)
-
-    if idx < num_chunks_x:
-        for i in range(num_chunks_y):
-            product = a_chunks[idx] * b_chunks[i]
-            scaled_value = product * 10**15
-            first_part = int(scaled_value // 10**8)
-            second_part = int(scaled_value % 10**8)
-            result_chunks[idx + i] += (first_part / (10**7))
-            result_chunks[idx + i + 1] += (second_part / (10**7))
+def add_chunks_kernel(a, b, result, digits):
+    if cuda.grid(1) == 0:
+        if(a[0] == b[0]):
+            result[0] = a[0]
+            for i in range(digits, 0, -1):
+                result[i] += a[i] + b[i]
+                if(result[i] >= 10):
+                    result[i - 1] += 1
+                    result[i] -= 10
+                    
+        if (a[0] == 1 and b[0] == 0):
+            for i in range(digits, 0, -1):
+                result[i] += b[i] - a[i]
+                if(result[i] < 0):
+                    result[i - 1] -= 1
+                    result[i] += 10
+            # for i in range(1, digits, 1):
+            #     if(result[i] != 0):
+            #         if(result[i] <0):
+            #             result[i] *= -1
+            #             result[0] = 1
         
-        for i in range(num_chunks_x + num_chunks_y - 2):
-            if result_chunks[i] >= 10.0:
-                carry = int(result_chunks[i] // 10.0)
-                result_chunks[i] -= carry * 10.0
-                if i + 1 < len(result_chunks):
-                    cuda.atomic.add(result_chunks, i + 1, carry)
-                   
-def split_decimal_to_floats(number):
-    number_str = str(number).replace('.', '')
-    chunk_size = 8
-    integer_array = []
-    for i in range(0, len(number_str), chunk_size):
-        chunk = number_str[i:i + chunk_size]
-        integer_array.append(np.float64(chunk) / pow(10, len(chunk) - 1))
-    return integer_array
+def to_chunks(number, num_digits):
+    number_str = number.replace('.', '')
+    if number_str[0] == '-':
+        number_str = number_str.replace('-', '1')
+    else:
+        number_str = '0' + number_str[0:]
+    required_length = num_digits + 1
+    
+    # Pad number_str with zeros if it's shorter than required_length
+    if len(number_str) < required_length:
+        number_str = number_str.ljust(required_length, '0')
+    else:
+        # Truncate number_str to required_length if it's longer
+        number_str = number_str[:required_length]
+    
+    int_array = []
+    for i in range(0, required_length):
+        num = int(number_str[i])
+        int_array.append(num)
+    
+    return int_array
 
 def round_to_significant_digits(value, digits):
     formatted = f"{value:.8f}"
@@ -68,30 +75,47 @@ def remove_trailing_zeros(s):
     else:
         return s 
 
-def chunks_to_decimal(float_array):
-    concatenated_str = ''.join(str(round_to_significant_digits(f, 8)).replace('.', '') for f in float_array)
-    combined_value = concatenated_str[0] + '.' + concatenated_str[1:]
-    return remove_trailing_zeros(combined_value)
+def chunks_to_decimal(arr):
+    digits = ''.join(str(digit) for digit in arr)
+    number_str = digits[1] + '.' + digits[2:]
+    number_str = remove_trailing_zeros(number_str)
+    if digits[0] == '0':
+        return number_str
+    else:
+        return '-' + number_str
 
-def add(center_x, center_y):
-    result_chunks = np.zeros(len(center_x) + len(center_y), dtype=np.float64)
+def add(num1, num2, digits):
+    result = np.zeros(digits + 1, dtype=np.int32)
     threads_per_block = 256
-    num_chunks_x = len(center_x)
-    num_chunks_y = len(center_y)
-    blocks_per_grid = (len(result_chunks) + (threads_per_block - 1)) // threads_per_block
+    blocks_per_grid = (len(result) + (threads_per_block - 1)) // threads_per_block
     
-    add_chunks_kernel[blocks_per_grid, threads_per_block](center_x, center_y, result_chunks, num_chunks_x, num_chunks_y)
-    return result_chunks
+    add_chunks_kernel[blocks_per_grid, threads_per_block](num1, num2, result, digits)
+    return result
+    
+def update_bounds(min_x, max_x, min_y, max_y, center_x, center_y, zoom):
+    range_x = max_x - min_x
+    range_y = max_y - min_y
 
-center_x = Decimal('0.000000000000009')
-center_y = Decimal('1.654321012345678')
+    new_range_x = range_x * zoom
+    new_range_y = range_y * zoom
 
-x_chunks = np.array(split_decimal_to_floats(center_x))
-y_chunks = np.array(split_decimal_to_floats(center_y))
+    min_x_new = center_x - new_range_x / 2
+    max_x_new = center_x + new_range_x / 2
+    min_y_new = center_y - new_range_y / 2
+    max_y_new = center_y + new_range_y / 2
 
-results = np.array(add(x_chunks, y_chunks))
+    return min_x_new, max_x_new, min_y_new, max_y_new
 
-print(f"X Chunks: {x_chunks}")
-print(f"Y Chunks: {y_chunks}")
-print(f"R Chunks: {results}")
-print(f"Final Result: {chunks_to_decimal(results)}")
+# main operating portion
+
+num_digits = 4
+center_x = '-0.123'
+center_y = '0.321'
+zoom     = '0.009'
+
+a = np.array(to_chunks(center_x, num_digits))
+b = np.array(to_chunks(center_y, num_digits))
+
+result = add(a, b, num_digits)
+
+print(result)
