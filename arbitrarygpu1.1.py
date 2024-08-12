@@ -1,10 +1,10 @@
 from decimal import Decimal, getcontext
 import numpy as np
 from numba import cuda
-import math
+import time
 from PIL import Image
 
-MAX_DIGITS = 1000
+MAX_DIGITS = 50
 
 @cuda.jit
 def add_chunks_kernel(a, b, result, temp, digits):
@@ -94,30 +94,28 @@ def copy_array(a, b, digits):
     for i in range(0, digits):
         a[i] = b[i]
 @cuda.jit 
-def mandelbrot_single_point(imag_values, real_values, image, res, digits, max_iterations):
+def mandelbrot_kernel(imag_values, real_values, image, res, digits, max_iterations):
                 x, y = cuda.grid(2)
                 
                 if x >= res or y >= res:
                     return
                 
-                z_real = cuda.local.array(shape=(MAX_DIGITS,), dtype=np.int32)
-                z_imag = cuda.local.array(shape=(MAX_DIGITS,), dtype=np.int32)
-                z_real2 = cuda.local.array(shape=(MAX_DIGITS,), dtype=np.int32)
-                z_imag2 = cuda.local.array(shape=(MAX_DIGITS,), dtype=np.int32)
-                new_z_real = cuda.local.array(shape=(MAX_DIGITS,), dtype=np.int32)
-                new_z_imag = cuda.local.array(shape=(MAX_DIGITS,), dtype=np.int32)
-                result = cuda.local.array(shape=(MAX_DIGITS,), dtype=np.int32)
-                temp = cuda.local.array(shape=(MAX_DIGITS,), dtype=np.int32)
+                z_real = cuda.local.array(shape=(MAX_DIGITS,), dtype=np.int16)
+                z_imag = cuda.local.array(shape=(MAX_DIGITS,), dtype=np.int16)
+                z_real2 = cuda.local.array(shape=(MAX_DIGITS,), dtype=np.int16)
+                z_imag2 = cuda.local.array(shape=(MAX_DIGITS,), dtype=np.int16)
+                new_z_real = cuda.local.array(shape=(MAX_DIGITS,), dtype=np.int16)
+                new_z_imag = cuda.local.array(shape=(MAX_DIGITS,), dtype=np.int16)
+                result = cuda.local.array(shape=(MAX_DIGITS,), dtype=np.int16)
+                temp = cuda.local.array(shape=(MAX_DIGITS,), dtype=np.int16)
 
-                negative1 = cuda.local.array(shape=(MAX_DIGITS,), dtype=np.int32)
+                negative1 = cuda.shared.array(shape=(MAX_DIGITS,), dtype=np.int16)
                 negative1[0] = 1
                 negative1[1] = 1
                 
-                two = cuda.local.array(shape=(MAX_DIGITS,), dtype=np.int32)
+                two = cuda.shared.array(shape=(MAX_DIGITS,), dtype=np.int16)
                 two[1] = 2
                 
-                reset_array(z_real, digits)
-                reset_array(z_imag, digits)
                 for k in range(max_iterations + 1):
                     
                     if(k == max_iterations):
@@ -133,7 +131,7 @@ def mandelbrot_single_point(imag_values, real_values, image, res, digits, max_it
                     if (magnitude_squared >= 4):
                         image[x][y] = k
                         break
-                    reset_array(result, digits)
+                    
                     multiply_chunks_kernel(z_imag2, negative1, result, temp, digits)
                     add_chunks_kernel(z_real2, result, result, temp, digits)
                     add_chunks_kernel(result, real_values[x][y], new_z_real, temp, digits)
@@ -146,27 +144,39 @@ def mandelbrot_single_point(imag_values, real_values, image, res, digits, max_it
                     copy_array(z_real, new_z_real, digits)
                     copy_array(z_imag, new_z_imag, digits)
                     
-                    # Reset result for next iteration
                     reset_array(result, digits)
-                    reset_array(z_real2, digits)
-                    reset_array(z_imag2, digits)
                     reset_array(new_z_real, digits)
                     reset_array(new_z_imag, digits)
                 
                 
 def generate_mandelbrot(center_x, center_y, zoom, res, max_iterations, digits):
+    # Create the image array on the device
     image = np.zeros((res, res), dtype=np.int32)
-    real_values = np.zeros((res, res, digits + 1))
-    imag_values = np.zeros((res, res, digits + 1))
     
+    # Create the real and imaginary values arrays on the host
+    real_values = np.zeros((res, res, digits + 1), dtype=np.int32)
+    imag_values = np.zeros((res, res, digits + 1), dtype=np.int32)
+    
+    # Set pixel values (function implementation needed)
     real_values, imag_values = set_pixels(center_x, center_y, real_values, imag_values, zoom, res, digits)
     
+    # Allocate device arrays
+    d_real_values = cuda.to_device(real_values)
+    d_imag_values = cuda.to_device(imag_values)
+    d_image = cuda.to_device(image)
+    
+    # Define block and grid sizes
     threadsperblock = (16, 16)
     blockspergrid_x = int(np.ceil(res / threadsperblock[0]))
     blockspergrid_y = int(np.ceil(res / threadsperblock[1]))
     blockspergrid = (blockspergrid_x, blockspergrid_y)
     
-    mandelbrot_single_point[blockspergrid, threadsperblock](imag_values, real_values, image, res, digits, max_iterations)
+    # Launch the kernel
+    mandelbrot_kernel[blockspergrid, threadsperblock](d_imag_values, d_real_values, d_image, res, digits, max_iterations)
+    
+    # Copy the result back to the host
+    image = d_image.copy_to_host()
+    
     return image
 
 def set_pixels(center_x_str, center_y_str, real_values, imag_values, zoom_str, res, digits):
@@ -179,9 +189,9 @@ def set_pixels(center_x_str, center_y_str, real_values, imag_values, zoom_str, r
     zoom = Decimal(zoom_str)
     
     # Calculate pixel size and minimum coordinates
-    pixel_size = Decimal(3.0) * zoom / Decimal(res)
-    minX = center_x - (pixel_size * Decimal(res) / Decimal(2))
-    minY = center_y - (pixel_size * Decimal(res) / Decimal(2))
+    pixel_size = Decimal(3.0) * zoom / res
+    minX = center_x - (pixel_size * res / Decimal(2.0))
+    minY = center_y - (pixel_size * res / Decimal(2.0))
     
     # Initialize grids
     real_values = [[None for _ in range(res)] for _ in range(res)]
@@ -190,8 +200,8 @@ def set_pixels(center_x_str, center_y_str, real_values, imag_values, zoom_str, r
     # Fill grids
     for i in range(res):
         for j in range(res):
-            x = minX + (Decimal(i) * pixel_size)
-            y = minY + (Decimal(j) * pixel_size)
+            x = minX + (i * pixel_size)
+            y = minY + (j * pixel_size)
             x = '{:.50f}'.format(x)
             y = '{:.50f}'.format(y)
             real_values[j][i] = to_chunks(str(x), digits)
@@ -218,10 +228,10 @@ def to_chunks(number, num_digits):
     
     int_array = []
     for i in range(0, required_length):
-        num = int(number_str[i])
+        num = np.int32(number_str[i])
         int_array.append(num)
     
-    return int_array
+    return np.array(int_array, dtype=np.int32)
 
 def remove_trailing_zeros(s):
     i = len(s) - 1
@@ -281,24 +291,30 @@ def generate_gradient(colors, num_steps):
     return gradient
 
 # main operating portion
+start_time = time.time()
 
 num_digits = 24
-center_x = '-0.7445398603559083806'
-center_y = ' 0.1217237738944248242'
-zoom     = '7.5e-16'
+center_x = '-0.744539860355908380'
+center_y = '0.121723773894424824'
+zoom     = '6.0e-15'
 
-res = 1080
-max_iterations = 50000
+res = 1440
+max_iterations = 30000
 
 colors = [
-    (255, 0, 0), #Red
-    (0, 0, 0), #Black
-    (255, 215, 0),   #Gold
+    (160, 35, 52), 
+    (255, 173, 96), 
+    (255, 238, 173),  
+    (150, 206, 180)
 ]
 num_steps = 2048
 gradient = generate_gradient(colors, num_steps)
 
 result = generate_mandelbrot(center_x, center_y, zoom, res, max_iterations, num_digits)
 
-print(result)
+print("Applying color...")
 array_to_image(result, gradient, max_iterations)
+
+end_time = time.time()
+elapsed_time = end_time - start_time
+print(f"Image generated in: {elapsed_time} seconds")
