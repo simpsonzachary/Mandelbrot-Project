@@ -117,9 +117,10 @@ def update_bounds(min_x, max_x, min_y, max_y, center_x, center_y, zoom_level):
 
     return min_x_new, max_x_new, min_y_new, max_y_new
 
+
 # Main portion
 width, height = 2560, 1440
-max_iter = 50000
+max_iter = 10000
 
 center_x = -0.7445398603559061
 center_y = 0.1217237738944253
