@@ -33,7 +33,7 @@ def mandelbrot_kernel(min_x, max_x, min_y, max_y, image, max_iter, gradient):
             z_real = np.float64(0.0)
             z_imag = np.float64(0.0)
             curr_iteration = 0
-            while(z_real * z_real + z_imag * z_imag < 2 and curr_iteration < max_iter):
+            while(z_real * z_real + z_imag * z_imag < 4 and curr_iteration < max_iter):
                 z_real_sq = z_real * z_real - z_imag * z_imag
                 z_imag = 2 * z_real * z_imag + c_imag
                 z_real = z_real_sq + c_real
@@ -45,8 +45,15 @@ def mandelbrot_kernel(min_x, max_x, min_y, max_y, image, max_iter, gradient):
                 image[y, x, 1] = 0
                 image[y, x, 2] = 0
             else:
-                nsmooth = float(math.log(math.log((z_real * z_real) + (z_imag * z_imag))) / math.log(2))
-                color_index = int(math.sqrt(curr_iteration - nsmooth) * 256) % gradient.shape[0]
+                
+                for i in range(4):
+                    z_real_sq = z_real * z_real - z_imag * z_imag
+                    z_imag = 2 * z_real * z_imag + c_imag
+                    z_real = z_real_sq + c_real
+                    curr_iteration += 1
+                    
+                nsmooth = float(curr_iteration + 2 - math.log(math.log(math.sqrt(z_real * z_real + z_imag * z_imag))) / math.log(2))
+                color_index = int(nsmooth) % gradient.shape[0]
                 image[y, x, 0] = gradient[color_index, 0]
                 image[y, x, 1] = gradient[color_index, 1]
                 image[y, x, 2] = gradient[color_index, 2]
@@ -119,17 +126,22 @@ def update_bounds(min_x, max_x, min_y, max_y, center_x, center_y, zoom_level):
 
 
 # Main portion
-width, height = 2560, 1440
-max_iter = 10000
+width, height = 1920, 1080
+max_iter = 50000
 
 center_x = -0.7445398603559061
 center_y = 0.1217237738944253
-zoom_level = 9.375e-13
+zoom_level = 4.375e-13
 
 colors = [
-    (0, 0, 0), #White
-    (255, 0, 0), #Red
-    (255, 215, 0),   #Gold
+    (225, 150, 0),
+    (0, 0, 0), 
+    (0, 0, 0), 
+    (0, 0, 0), 
+    (0, 0, 100), 
+    (0, 0, 100), 
+    (0, 0, 100), 
+    (180, 225, 235), 
 ]
 num_steps = 2048
 
