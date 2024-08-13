@@ -10,12 +10,12 @@ MAX_DIGITS_TEMP = 48
 
 @cuda.jit
 def add_chunks_kernel(a, b, result):
-        temp = cuda.local.array(shape=(MAX_DIGITS_TEMP,), dtype=np.int32)
+        temp = cuda.local.array(shape=(MAX_DIGITS), dtype=np.int32)
         if(a[0] == b[0]):
             temp[0] = a[0]
             for i in range(MAX_DIGITS, 0, -1):
                 temp[i] += a[i] + b[i]
-                if(temp[i] >= 10):
+                if(temp[i] >= 10 and i > 1):
                     temp[i - 1] += 1
                     temp[i] -= 10
                     
@@ -32,14 +32,14 @@ def add_chunks_kernel(a, b, result):
                 temp[0] = 1
                 for i in range(MAX_DIGITS, 0, -1):
                     temp[i] += a[i] - b[i]
-                    if(temp[i] < 0):
+                    if(temp[i] < 0 and i > 1):
                         temp[i - 1] -= 1
                         temp[i] += 10
             if (greater_abs == 1):
                 temp[0] = 0
                 for i in range(MAX_DIGITS, 0, -1):
                     temp[i] += b[i] - a[i]
-                    if(temp[i] < 0):
+                    if(temp[i] < 0 and i > 1):
                         temp[i - 1] -= 1
                         temp[i] += 10
                         
@@ -64,7 +64,7 @@ def add_chunks_kernel(a, b, result):
 
 @cuda.jit
 def multiply_chunks_kernel(a, b, result):
-        temp = cuda.local.array(shape=(MAX_DIGITS_TEMP,), dtype=np.int32)
+        temp = cuda.local.array(shape=(MAX_DIGITS_TEMP), dtype=np.int32)
         if (a[0] == b[0]):
             result[0] = 0
         else:
@@ -74,7 +74,7 @@ def multiply_chunks_kernel(a, b, result):
             for j in range(0, MAX_DIGITS):
                 temp[i + j] += a[i + 1] * b[j + 1]
         
-        for i in range(MAX_DIGITS * 2, 0, -1):
+        for i in range(MAX_DIGITS_TEMP, 0, -1):
             if(temp[i] >= 10):
                 temp[i - 1] += temp[i] / 10
                 temp[i] %= 10
@@ -99,18 +99,18 @@ def mandelbrot_kernel(imag_values, real_values, image, res, max_iterations, fina
                 if x > res or y > res:
                     return
                 
-                z_real = cuda.local.array(shape=(MAX_DIGITS,), dtype=np.int32)
-                z_imag = cuda.local.array(shape=(MAX_DIGITS,), dtype=np.int32)
-                z_real2 = cuda.local.array(shape=(MAX_DIGITS,), dtype=np.int32)
-                z_imag2 = cuda.local.array(shape=(MAX_DIGITS,), dtype=np.int32)
-                new_z_real = cuda.local.array(shape=(MAX_DIGITS,), dtype=np.int32)
-                result = cuda.local.array(shape=(MAX_DIGITS,), dtype=np.int32)
+                z_real = cuda.local.array(shape=(MAX_DIGITS), dtype=np.int32)
+                z_imag = cuda.local.array(shape=(MAX_DIGITS), dtype=np.int32)
+                z_real2 = cuda.local.array(shape=(MAX_DIGITS), dtype=np.int32)
+                z_imag2 = cuda.local.array(shape=(MAX_DIGITS), dtype=np.int32)
+                new_z_real = cuda.local.array(shape=(MAX_DIGITS), dtype=np.int32)
+                result = cuda.local.array(shape=(MAX_DIGITS), dtype=np.int32)
 
-                negative1 = cuda.shared.array(shape=(MAX_DIGITS,), dtype=np.int32)
+                negative1 = cuda.shared.array(shape=(MAX_DIGITS), dtype=np.int32)
                 negative1[0] = 1
                 negative1[1] = 1
                 
-                two = cuda.shared.array(shape=(MAX_DIGITS,), dtype=np.int32)
+                two = cuda.shared.array(shape=(MAX_DIGITS), dtype=np.int32)
                 two[1] = 2
                 
                 for k in range(max_iterations):
@@ -121,9 +121,9 @@ def mandelbrot_kernel(imag_values, real_values, image, res, max_iterations, fina
                     add_chunks_kernel(z_real2, z_imag2, result)
                     
                     if (result[1] >= 4):
-                        image[x][y] = k
                         copy_array(final_real[x][y], z_real)
                         copy_array(final_imag[x][y], z_imag)
+                        image[x][y] = k
                         return
                     
                     multiply_chunks_kernel(z_imag2, negative1, result)
@@ -135,10 +135,13 @@ def mandelbrot_kernel(imag_values, real_values, image, res, max_iterations, fina
                     add_chunks_kernel(result, imag_values[x][y], z_imag)
                     
                     copy_array(z_real, new_z_real)
+                    
+                    
                 image[x][y] = max_iterations
                 return
                 
 def generate_mandelbrot(center_x, center_y, zoom, res, max_iterations):
+    start_time = time.time()
     image = np.zeros((res, res), dtype=np.int32)
     
     real_values = np.zeros((res, res, MAX_DIGITS + 1), dtype=np.int32)
@@ -149,9 +152,9 @@ def generate_mandelbrot(center_x, center_y, zoom, res, max_iterations):
     
     print("Setting pixels...")
     real_values, imag_values = set_pixels(center_x, center_y, real_values, imag_values, zoom, res)
-
-    d_real_values = cuda.to_device(real_values)
-    d_imag_values = cuda.to_device(imag_values)
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    print(f"Time to set pixels: {elapsed_time} seconds")
     
     d_image = cuda.to_device(image)
     
@@ -160,8 +163,12 @@ def generate_mandelbrot(center_x, center_y, zoom, res, max_iterations):
     blockspergrid_y = int(np.ceil(res / threadsperblock[1]))
     blockspergrid = (blockspergrid_x, blockspergrid_y)
     
+    start_time = time.time()
     print("Calculating grid...")
-    mandelbrot_kernel[blockspergrid, threadsperblock](d_imag_values, d_real_values, d_image, res, max_iterations, final_real, final_imag)
+    mandelbrot_kernel[blockspergrid, threadsperblock](imag_values, real_values, d_image, res, max_iterations, final_real, final_imag)
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    print(f"Time to calculate grid: {elapsed_time} seconds")
     
     image = d_image.copy_to_host()
     return image, final_real, final_imag, real_values, imag_values
@@ -230,8 +237,10 @@ def chunks_to_decimal(arr):
         return '-' + number_str
 
 def array_to_image(array, gradient, max_value, final_real, final_imag, real_values, imag_values):
+    start_time = time.time()
     height, width = array.shape
     image_data = np.zeros((height, width, 3), dtype=np.uint8)
+
     for i in range(width):
         for j in range(height):
             if(array[i][j] == max_value):
@@ -241,7 +250,17 @@ def array_to_image(array, gradient, max_value, final_real, final_imag, real_valu
             else:
                 z_real = float(Decimal(chunks_to_decimal(final_real[i][j])))
                 z_imag = float(Decimal(chunks_to_decimal(final_imag[i][j])))
+                c_real = float(Decimal(chunks_to_decimal(real_values[i][j])))
+                c_imag = float(Decimal(chunks_to_decimal(imag_values[i][j])))
+
+                z_real_sq = z_real * z_real - z_imag * z_imag
+                z_imag = 2 * z_real * z_imag + c_imag
+                z_real = z_real_sq + c_real
                 
+                z_real_sq = z_real * z_real - z_imag * z_imag
+                z_imag = 2 * z_real * z_imag + c_imag
+                z_real = z_real_sq + c_real
+
                 nsmooth = float(array[i][j] + 2 - (math.log(math.log(math.sqrt(z_real * z_real + z_imag * z_imag)))) / math.log(2))
                 color_index = int(nsmooth * 32) % gradient.shape[0]
                 
@@ -252,6 +271,9 @@ def array_to_image(array, gradient, max_value, final_real, final_imag, real_valu
     # Create and save the image
     img = Image.fromarray(image_data, 'RGB')  # 'L' mode is for grayscale
     img.save('output_image.png')
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    print(f"Time to assign colors: {elapsed_time} seconds")
 
 def generate_gradient(colors, num_steps):
     num_colors = len(colors)
@@ -277,31 +299,28 @@ def generate_gradient(colors, num_steps):
 # main operating portion
 start_time = time.time()
 
-center_x = '0'
-center_y = '0'
-zoom     = '1'
+center_x = '-0.74453986035590838081'
+center_y = '0.12172377389442482421'
+zoom     = '9.375e-17'
 
-res = 540
-max_iterations = 100
+res = 1080
+max_iterations = 30000
 
 colors = [
-    (225, 150, 0),
-    (0, 0, 0), 
-    (0, 0, 0), 
-    (0, 0, 0), 
-    (0, 0, 100), 
-    (0, 0, 100), 
-    (0, 0, 100), 
-    (180, 225, 235), 
+    (0, 7, 100),
+    (32, 107, 203), 
+    (237, 255, 255), 
+    (255, 170, 0), 
+    (0, 2, 0)
 ]
 num_steps = 2048
 gradient = generate_gradient(colors, num_steps)
 
 result, final_real, final_imag, real_values, imag_values = generate_mandelbrot(center_x, center_y, zoom, res, max_iterations)
-
+    
 print("Applying color...")
 array_to_image(result, gradient, max_iterations, final_real, final_imag, real_values, imag_values)
 
 end_time = time.time()
 elapsed_time = end_time - start_time
-print(f"Image generated in: {elapsed_time} seconds")
+print(f"Total time: {elapsed_time} seconds")
