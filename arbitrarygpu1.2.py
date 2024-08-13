@@ -5,8 +5,8 @@ import time
 import math
 from PIL import Image
 
-MAX_DIGITS = 24
-MAX_DIGITS_TEMP = 48
+MAX_DIGITS = 32
+MAX_DIGITS_TEMP = 64
 
 @cuda.jit
 def add_chunks_kernel(a, b, result):
@@ -136,7 +136,6 @@ def mandelbrot_kernel(imag_values, real_values, image, res, max_iterations, fina
                     
                     copy_array(z_real, new_z_real)
                     
-                    
                 image[x][y] = max_iterations
                 return
                 
@@ -174,20 +173,15 @@ def generate_mandelbrot(center_x, center_y, zoom, res, max_iterations):
     return image, final_real, final_imag, real_values, imag_values
 
 def set_pixels(center_x_str, center_y_str, real_values, imag_values, zoom_str, res):
-
-    getcontext().prec = MAX_DIGITS * 2
     
-    # Convert input strings to Decimal
     center_x = Decimal(center_x_str)
     center_y = Decimal(center_y_str) * -1
     zoom = Decimal(zoom_str)
     
-    # Calculate pixel size and minimum coordinates
     pixel_size = Decimal(3.0) * zoom / res
     minX = center_x - (pixel_size * res / Decimal(2.0))
     minY = center_y - (pixel_size * res / Decimal(2.0))
-    
-    # Initialize grids
+
     real_values = [[0 for _ in range(res)] for _ in range(res)]
     imag_values = [[0 for _ in range(res)] for _ in range(res)]
     
@@ -213,28 +207,24 @@ def to_chunks(number):
     else:
         number_str = '0' + number_str[0:]
     required_length = MAX_DIGITS + 1
-    
-    # Pad number_str with zeros if it's shorter than required_length
-    if len(number_str) < required_length:
-        number_str = number_str.ljust(required_length, '0')
-    else:
+
+    if len(number_str) > required_length:
         # Truncate number_str to required_length if it's longer
         number_str = number_str[:required_length]
     
-    int_array = []
+    int_array = np.zeros(MAX_DIGITS + 1, dtype=np.int32)
     for i in range(0, required_length):
         num = np.int32(number_str[i])
-        int_array.append(num)
-    
-    return np.array(int_array, dtype=np.int32)
+        int_array[i] = num
+    return int_array
 
 def chunks_to_decimal(arr):
-    digits = ''.join(str(digit) for digit in arr)
-    number_str = digits[1] + '.' + digits[2:]
-    if digits[0] == '0':
-        return number_str
-    else:
-        return '-' + number_str
+    val = 0.0
+    for i in range(1, len(arr)):
+        val += np.float64(np.float64(arr[i]) / pow(10, i - 1))
+    if arr[0] == 1:
+        val *= -1
+    return val
 
 def array_to_image(array, gradient, max_value, final_real, final_imag, real_values, imag_values):
     start_time = time.time()
@@ -248,21 +238,17 @@ def array_to_image(array, gradient, max_value, final_real, final_imag, real_valu
                 image_data[i, j, 1] = 0
                 image_data[i, j, 2] = 0
             else:
-                z_real = float(Decimal(chunks_to_decimal(final_real[i][j])))
-                z_imag = float(Decimal(chunks_to_decimal(final_imag[i][j])))
-                c_real = float(Decimal(chunks_to_decimal(real_values[i][j])))
-                c_imag = float(Decimal(chunks_to_decimal(imag_values[i][j])))
+                z_real = chunks_to_decimal(final_real[i][j])
+                z_imag = chunks_to_decimal(final_imag[i][j])
+                c_real = chunks_to_decimal(real_values[i][j])
+                c_imag = chunks_to_decimal(imag_values[i][j])
 
-                z_real_sq = z_real * z_real - z_imag * z_imag
-                z_imag = 2 * z_real * z_imag + c_imag
-                z_real = z_real_sq + c_real
-                
                 z_real_sq = z_real * z_real - z_imag * z_imag
                 z_imag = 2 * z_real * z_imag + c_imag
                 z_real = z_real_sq + c_real
 
                 nsmooth = float(array[i][j] + 2 - (math.log(math.log(math.sqrt(z_real * z_real + z_imag * z_imag)))) / math.log(2))
-                color_index = int(nsmooth * 32) % gradient.shape[0]
+                color_index = int(math.sqrt(nsmooth) * 128) % gradient.shape[0]
                 
                 image_data[i, j, 0] = gradient[color_index, 0]
                 image_data[i, j, 1] = gradient[color_index, 1]
@@ -299,19 +285,19 @@ def generate_gradient(colors, num_steps):
 # main operating portion
 start_time = time.time()
 
-center_x = '-0.74453986035590838081'
-center_y = '0.12172377389442482421'
-zoom     = '9.375e-17'
+center_x = '-0.74453986035590838012'
+center_y = '0.12172377389442482241'
+zoom     = '1.172e-17'
 
 res = 1080
-max_iterations = 30000
+max_iterations = 250000
 
 colors = [
+    (0, 2, 0),
     (0, 7, 100),
     (32, 107, 203), 
     (237, 255, 255), 
     (255, 170, 0), 
-    (0, 2, 0)
 ]
 num_steps = 2048
 gradient = generate_gradient(colors, num_steps)

@@ -18,11 +18,12 @@ class Color:
 
 @cuda.jit
 def mandelbrot_kernel(min_x, max_x, min_y, max_y, image, max_iter, gradient):
-    height, width, _ = image.shape
+    height, width = image.shape[:2]
+    startX, startY = cuda.grid(2)
+    
+    # Calculate pixel size
     pixel_size_x = (max_x - min_x) / width
     pixel_size_y = (max_y - min_y) / height
-    
-    startX, startY = cuda.grid(2)
     
     for x in range(startX, width, cuda.blockDim.x * cuda.gridDim.x):
         real = min_x + x * pixel_size_x
@@ -33,33 +34,35 @@ def mandelbrot_kernel(min_x, max_x, min_y, max_y, image, max_iter, gradient):
             z_real = np.float64(0.0)
             z_imag = np.float64(0.0)
             curr_iteration = 0
+
+            stripe_sum = np.float64(0.0)
+            stripe_constant = np.float64(10)
             
             for k in range(max_iter):
                 check = z_real * z_real + z_imag * z_imag
                 if check >= 4:
                     break
+                
                 z_real_sq = z_real * z_real - z_imag * z_imag
                 z_imag = 2 * z_real * z_imag + c_imag
                 z_real = z_real_sq + c_real
+                
+                angle = np.arctan2(z_real, z_imag)  # Use np.arctan2 for angle calculation
+                stripe_sum += 0.5 * math.sin(stripe_constant * angle) + 0.5
                 curr_iteration += 1
-            # Apply a color gradient based on the number of iterations
+
+            stripe_average = stripe_sum / float(curr_iteration if curr_iteration > 0 else 1)
+
+            gradient_index = int(stripe_average * (gradient.shape[0] - 1))  # Ensure within bounds
+
             if curr_iteration == max_iter:
                 image[y, x, 0] = 0
                 image[y, x, 1] = 0
                 image[y, x, 2] = 0
             else:
-                
-                for i in range(2):
-                    z_real_sq = z_real * z_real - z_imag * z_imag
-                    z_imag = 2 * z_real * z_imag + c_imag
-                    z_real = z_real_sq + c_real
-                    curr_iteration += 1
-                    
-                nsmooth = float(curr_iteration + 2 - math.log(math.log(math.sqrt(z_real * z_real + z_imag * z_imag))) / math.log(2))
-                color_index = int(nsmooth * 32) % gradient.shape[0]
-                image[y, x, 0] = gradient[color_index, 0]
-                image[y, x, 1] = gradient[color_index, 1]
-                image[y, x, 2] = gradient[color_index, 2]
+                image[y, x, 0] = gradient[gradient_index, 0]
+                image[y, x, 1] = gradient[gradient_index, 1]
+                image[y, x, 2] = gradient[gradient_index, 2]
 
 def generate_mandelbrot(center_x, center_y, zoom_level, width, height, max_iter, gradient):
     min_x, max_x = -2.0, 1.0
@@ -129,22 +132,19 @@ def update_bounds(min_x, max_x, min_y, max_y, center_x, center_y, zoom_level):
 
 
 # Main portion
-width, height = 360, 360
-max_iter = 100
+width, height = 1920, 1080
+max_iter = 15000
 
-center_x = 0
-center_y = 0
-zoom_level = 2
+center_x = -0.74548
+center_y =  0.11669
+zoom_level = 0.01276
 
 colors = [
-    (225, 150, 0),
-    (0, 0, 0), 
-    (0, 0, 0), 
-    (0, 0, 0), 
-    (0, 0, 100), 
-    (0, 0, 100), 
-    (0, 0, 100), 
-    (180, 225, 235), 
+    (255, 170, 0), 
+    (0, 2, 0),
+    (0, 7, 100),
+    (32, 107, 203), 
+    (237, 255, 255), 
 ]
 num_steps = 2048
 
