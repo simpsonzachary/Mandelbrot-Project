@@ -24,42 +24,32 @@ def mandelbrot_kernel(min_x, max_x, min_y, max_y, image, max_iter, gradient):
     # Calculate pixel size
     pixel_size_x = (max_x - min_x) / width
     pixel_size_y = (max_y - min_y) / height
+
+    z_real = 0
+    z_imag = 0
     
     for x in range(startX, width, cuda.blockDim.x * cuda.gridDim.x):
-        real = min_x + x * pixel_size_x
+        c_real = min_x + x * pixel_size_x
         for y in range(startY, height, cuda.blockDim.y * cuda.gridDim.y):
-            imag = min_y + y * pixel_size_y
-            c_real = np.float64(real)
-            c_imag = np.float64(imag)
-            z_real = np.float64(0.0)
-            z_imag = np.float64(0.0)
+            c_imag = min_y + y * pixel_size_y
             curr_iteration = 0
-
-            stripe_sum = np.float64(0.0)
-            stripe_constant = np.float64(10)
             
             for k in range(max_iter):
                 check = z_real * z_real + z_imag * z_imag
                 if check >= 4:
                     break
-                
                 z_real_sq = z_real * z_real - z_imag * z_imag
                 z_imag = 2 * z_real * z_imag + c_imag
                 z_real = z_real_sq + c_real
                 
-                angle = np.arctan2(z_real, z_imag)  # Use np.arctan2 for angle calculation
-                stripe_sum += 0.5 * math.sin(stripe_constant * angle) + 0.5
                 curr_iteration += 1
-
-            stripe_average = stripe_sum / float(curr_iteration if curr_iteration > 0 else 1)
-
-            gradient_index = int(stripe_average * (gradient.shape[0] - 1))  # Ensure within bounds
-
+    
             if curr_iteration == max_iter:
                 image[y, x, 0] = 0
                 image[y, x, 1] = 0
                 image[y, x, 2] = 0
             else:
+                gradient_index = int(math.sqrt((curr_iteration)) * 128) % gradient.shape[0]
                 image[y, x, 0] = gradient[gradient_index, 0]
                 image[y, x, 1] = gradient[gradient_index, 1]
                 image[y, x, 2] = gradient[gradient_index, 2]
@@ -133,19 +123,20 @@ def update_bounds(min_x, max_x, min_y, max_y, center_x, center_y, zoom_level):
 
 # Main portion
 width, height = 1920, 1080
-max_iter = 15000
+max_iter = 100
 
-center_x = -0.74548
-center_y =  0.11669
-zoom_level = 0.01276
+center_x = -0.5
+center_y =  0
+zoom_level = 1
 
 colors = [
-    (255, 170, 0), 
     (0, 2, 0),
     (0, 7, 100),
     (32, 107, 203), 
     (237, 255, 255), 
+    (255, 170, 0), 
 ]
+
 num_steps = 2048
 
 gradient = generate_gradient(colors, num_steps)
