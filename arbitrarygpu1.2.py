@@ -5,87 +5,9 @@ import time
 import math
 from PIL import Image
 
-MAX_DIGITS = 24
-MAX_DIGITS_TEMP = MAX_DIGITS * 2
-
-@cuda.jit
-def add_chunks_kernel(a, b, result):
-        temp = cuda.local.array(shape=(MAX_DIGITS), dtype=np.int32)
-        if(a[0] == b[0]):
-            temp[0] = a[0]
-            for i in range(MAX_DIGITS, 0, -1):
-                temp[i] += a[i] + b[i]
-                if(temp[i] >= 10 and i > 1):
-                    temp[i - 1] += 1
-                    temp[i] -= 10
-                    
-        greater_abs = 0
-        for i in range(1, MAX_DIGITS):
-            if (a[i] > b[i]):
-                break
-            if (b[i] > a[i]):
-                greater_abs = 1
-                break
-        
-        if (a[0] == 1 and b[0] == 0):
-            if (greater_abs == 0):
-                temp[0] = 1
-                for i in range(MAX_DIGITS, 0, -1):
-                    temp[i] += a[i] - b[i]
-                    if(temp[i] < 0 and i > 1):
-                        temp[i - 1] -= 1
-                        temp[i] += 10
-            if (greater_abs == 1):
-                temp[0] = 0
-                for i in range(MAX_DIGITS, 0, -1):
-                    temp[i] += b[i] - a[i]
-                    if(temp[i] < 0 and i > 1):
-                        temp[i - 1] -= 1
-                        temp[i] += 10
-                        
-        if (a[0] == 0 and b[0] == 1):
-            if (greater_abs == 0):
-                temp[0] = 0
-                for i in range(MAX_DIGITS, 0, -1):
-                    temp[i] += a[i] - b[i]
-                    if(temp[i] < 0):
-                        temp[i - 1] -= 1
-                        temp[i] += 10
-            if (greater_abs == 1):
-                temp[0] = 1
-                for i in range(MAX_DIGITS, 0, -1):
-                    temp[i] += b[i] - a[i]
-                    if(temp[i] < 0):
-                        temp[i - 1] -= 1
-                        temp[i] += 10
-        
-        for i in range(0, MAX_DIGITS):
-            result[i] = temp[i]
-
-@cuda.jit
-def multiply_chunks_kernel(a, b, result):
-        temp = cuda.local.array(shape=(MAX_DIGITS_TEMP), dtype=np.int32)
-        if (a[0] == b[0]):
-            result[0] = 0
-        else:
-            result[0] = 1
-        
-        for i in range(0, MAX_DIGITS):
-            for j in range(0, MAX_DIGITS):
-                temp[i + j] += a[i + 1] * b[j + 1]
-        
-        for i in range(MAX_DIGITS_TEMP, 0, -1):
-            if(temp[i] >= 10):
-                temp[i - 1] += temp[i] / 10
-                temp[i] %= 10
-                
-        for i in range(0, MAX_DIGITS):
-            result[i + 1] = temp[i]
-
-@cuda.jit
-def reset_array(arr):
-    for i in range(0, MAX_DIGITS):
-        arr[i] = 0
+from multiply import multiply_chunks_kernel
+from add import add_chunks_kernel
+from utils import to_chunks, chunks_to_decimal, MAX_DIGITS
         
 @cuda.jit
 def copy_array(a, b):
@@ -157,7 +79,7 @@ def generate_mandelbrot(center_x, center_y, zoom, res, max_iterations):
     
     d_image = cuda.to_device(image)
     
-    threadsperblock = (32, 32)
+    threadsperblock = (16, 16)
     blockspergrid_x = int(np.ceil(res / threadsperblock[0]))
     blockspergrid_y = int(np.ceil(res / threadsperblock[1]))
     blockspergrid = (blockspergrid_x, blockspergrid_y)
@@ -200,32 +122,6 @@ def set_pixels(center_x_str, center_y_str, real_values, imag_values, zoom_str, r
 
     return real_values, imag_values
 
-def to_chunks(number):
-    number_str = number.replace('.', '')
-    if number_str[0] == '-':
-        number_str = number_str.replace('-', '1')
-    else:
-        number_str = '0' + number_str[0:]
-    required_length = MAX_DIGITS + 1
-
-    if len(number_str) > required_length:
-        number_str = number_str[:required_length]
-    
-    int_array = np.zeros(MAX_DIGITS + 1, dtype=np.int32)
-    for i in range(0, len(number_str)):
-        num = np.int32(number_str[i])
-        int_array[i] = num
-    return int_array
-
-def chunks_to_decimal(arr):
-    val = 0.0
-    for i in range(1, len(arr)):
-        if(arr[i] != 0):
-            val += np.float64(np.float64(arr[i]) / 10**(i - 1))
-    if arr[0] == 1:
-        val *= -1
-    return val
-
 def array_to_image(array, gradient, max_value, final_real, final_imag, real_values, imag_values):
     start_time = time.time()
     image_data = np.zeros((res, res, 3), dtype=np.uint8)
@@ -241,7 +137,7 @@ def array_to_image(array, gradient, max_value, final_real, final_imag, real_valu
                 z_imag = chunks_to_decimal(final_imag[i][j])
 
                 nsmooth = float(array[i][j] - (math.log(math.log(math.sqrt(z_real * z_real + z_imag * z_imag)))) / math.log(2))
-                color_index = int(math.sqrt(nsmooth) * 256) % (gradient.shape[0])
+                color_index = int(math.sqrt(nsmooth) * 96) % (gradient.shape[0])
                 
                 image_data[i, j, 0] = gradient[color_index, 0]
                 image_data[i, j, 1] = gradient[color_index, 1]
@@ -278,12 +174,12 @@ def generate_gradient(colors, num_steps):
 # main operating portion
 start_time = time.time()
 
-center_x = '-0.7445398603559083806'
-center_y = '0.1217237738944248242'
-zoom     = '7.5e-16'
+center_x = '0'
+center_y = '0'
+zoom     = '1'
 
 res = 240
-max_iterations = 50000
+max_iterations = 100
 
 colors = [
     (0, 7, 100),
