@@ -33,8 +33,8 @@ if __name__ == "__main__":
         multiply_chunks_kernel[1, 1](num1, num2, result)
         return result
 
-    a = '-4.12345678'
-    b = '4.12345678'
+    a = '1.234567890123456789'
+    b = '-1.234567890123456789'
 
     print(multiply(a, b))
     print(chunks_to_decimal(multiply(a, b)))

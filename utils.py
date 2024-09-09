@@ -1,7 +1,8 @@
 import numpy as np
 
-MAX_DIGITS = 24
+MAX_DIGITS = 24 # must be divisible by 3
 MAX_DIGITS_TEMP = MAX_DIGITS * 2
+TOOM3_CHUNK_DIGITS = MAX_DIGITS // 3
 
 def to_chunks(number):
     number_str = number.replace('.', '')

@@ -49,7 +49,7 @@ def mandelbrot_kernel(min_x, max_x, min_y, max_y, image, max_iter, gradient):
                 image[y, x, 1] = 0
                 image[y, x, 2] = 0
             else:
-                gradient_index = int(math.sqrt((curr_iteration)) * 128) % gradient.shape[0]
+                gradient_index = curr_iteration % gradient.shape[0]
                 image[y, x, 0] = gradient[gradient_index, 0]
                 image[y, x, 1] = gradient[gradient_index, 1]
                 image[y, x, 2] = gradient[gradient_index, 2]
@@ -137,7 +137,7 @@ colors = [
     (255, 170, 0), 
 ]
 
-num_steps = 2048
+num_steps = 12
 
 gradient = generate_gradient(colors, num_steps)
 

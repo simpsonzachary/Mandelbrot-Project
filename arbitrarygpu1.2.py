@@ -5,7 +5,7 @@ import time
 import math
 from PIL import Image
 
-from multiply import multiply_chunks_kernel
+from toom3 import multiply_chunks_kernel
 from add import add_chunks_kernel
 from utils import to_chunks, chunks_to_decimal, MAX_DIGITS
         
@@ -77,6 +77,10 @@ def generate_mandelbrot(center_x, center_y, zoom, res, max_iterations):
     elapsed_time = end_time - start_time
     print(f"Time to set pixels: {elapsed_time} seconds")
     
+    d_real = cuda.to_device(real_values)
+    d_imag = cuda.to_device(imag_values)
+    d_freal = cuda.to_device(final_real)
+    d_fimag = cuda.to_device(final_imag)
     d_image = cuda.to_device(image)
     
     threadsperblock = (16, 16)
@@ -86,15 +90,24 @@ def generate_mandelbrot(center_x, center_y, zoom, res, max_iterations):
     
     start_time = time.time()
     print("Calculating grid...")
-    mandelbrot_kernel[blockspergrid, threadsperblock](imag_values, real_values, d_image, res, max_iterations, final_real, final_imag)
+    
+    mandelbrot_kernel[blockspergrid, threadsperblock](d_imag, d_real, d_image, res, max_iterations, d_freal, d_fimag)
+    
+    real_values = d_real.copy_to_host()
+    imag_values = d_imag.copy_to_host()
+    final_real = d_freal.copy_to_host()
+    final_imag = d_fimag.copy_to_host()
+    image = d_image.copy_to_host()
+    
     end_time = time.time()
     elapsed_time = end_time - start_time
     print(f"Time to calculate grid: {elapsed_time} seconds")
     
-    image = d_image.copy_to_host()
     return image, final_real, final_imag, real_values, imag_values
 
 def set_pixels(center_x_str, center_y_str, real_values, imag_values, zoom_str, res):
+    
+    getcontext().prec = MAX_DIGITS * 2
     
     center_x = Decimal(center_x_str)
     center_y = Decimal(center_y_str) * -1
@@ -112,8 +125,8 @@ def set_pixels(center_x_str, center_y_str, real_values, imag_values, zoom_str, r
         for j in range(res):
             x = minX + (i * pixel_size)
             y = minY + (j * pixel_size)
-            x = '{:.50f}'.format(x)
-            y = '{:.50f}'.format(y)
+            x = '{:.200f}'.format(x)
+            y = '{:.200f}'.format(y)
             real_values[j][i] = to_chunks(str(x))
             imag_values[j][i] = to_chunks(str(y))
 
@@ -122,7 +135,7 @@ def set_pixels(center_x_str, center_y_str, real_values, imag_values, zoom_str, r
 
     return real_values, imag_values
 
-def array_to_image(array, gradient, max_value, final_real, final_imag, real_values, imag_values):
+def array_to_image(array, gradient, max_value, final_real, final_imag):
     start_time = time.time()
     image_data = np.zeros((res, res, 3), dtype=np.uint8)
 
@@ -137,7 +150,7 @@ def array_to_image(array, gradient, max_value, final_real, final_imag, real_valu
                 z_imag = chunks_to_decimal(final_imag[i][j])
 
                 nsmooth = float(array[i][j] - (math.log(math.log(math.sqrt(z_real * z_real + z_imag * z_imag)))) / math.log(2))
-                color_index = int(math.sqrt(nsmooth) * 96) % (gradient.shape[0])
+                color_index = int(nsmooth * 6) % (gradient.shape[0])
                 
                 image_data[i, j, 0] = gradient[color_index, 0]
                 image_data[i, j, 1] = gradient[color_index, 1]
@@ -168,33 +181,36 @@ def generate_gradient(colors, num_steps):
             b = int(start_color[2] * (1 - t) + end_color[2] * t)
             
             gradient[gradient_index] = [r, g, b]
+            
+    gradient[num_steps - 1] = colors[0]
     
     return gradient
 
 # main operating portion
 start_time = time.time()
 
-center_x = '0'
-center_y = '0'
-zoom     = '1'
+center_x = '-0.154336052508107179265305091632196962650884871466568125910282277206471652431628774014739313859902112007245675469882225230637912621473564145409973045901'
+center_y = '1.0307951891020566491064253562797191540856566236276766471523470911761717308962353343318675114228208177256898278834543858465101418159849468885389383082372'
+zoom     = '4e-96'
 
-res = 240
-max_iterations = 100
+res = 256
+max_iterations = 5000
 
 colors = [
-    (0, 7, 100),
-    (32, 107, 203), 
-    (237, 255, 255), 
-    (255, 170, 0), 
+    (100, 7, 0),
+    (203, 107, 32), 
+    (255, 255, 237), 
+    (0, 170, 255), 
     (0, 2, 0),
 ]
-num_steps = 2048
+
+num_steps = 256
 gradient = generate_gradient(colors, num_steps)
 
 result, final_real, final_imag, real_values, imag_values = generate_mandelbrot(center_x, center_y, zoom, res, max_iterations)
     
 print("Applying color...")
-array_to_image(result, gradient, max_iterations, final_real, final_imag, real_values, imag_values)
+array_to_image(result, gradient, max_iterations, final_real, final_imag)
 
 end_time = time.time()
 elapsed_time = end_time - start_time
